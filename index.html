@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水準測量 往復野帳・精度管理アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Excel出力用ライブラリ -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        /* フォントとベース設定 */
+        body { 
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif; 
+            background-color: #d1d5db; 
+            background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.1) 10px, rgba(255,255,255,0.1) 20px);
+        }
+
+        /* 工事黒板風のヘッダー */
+        .kokuban-header {
+            background-color: #1b4d3e; 
+            color: #ffffff;
+            border: 6px solid #8b5a2b; 
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            text-shadow: 1px 1px 0px rgba(0,0,0,0.5);
+        }
+
+        /* クリップボード風のパネル */
+        .binder-panel { 
+            background-color: #fcfbf7; 
+            border: 1px solid #d1d5db;
+            border-top: 24px solid #374151; 
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); 
+            position: relative;
+        }
+        .binder-panel::before {
+            content: "";
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 16px;
+            background-color: #9ca3af;
+            border-radius: 4px;
+            box-shadow: inset 0 -2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* レベルブック（野帳）風のテーブル */
+        .yacho-table { border-collapse: collapse; width: 100%; }
+        .yacho-table th, .yacho-table td { border: 1px solid #7cb342; }
+        .yacho-table th { background-color: #e8f5e9; color: #1b5e20; }
+        .yacho-input {
+            background-color: transparent;
+            border: none;
+            outline: none;
+            width: 100%;
+            padding: 0.5rem;
+            font-family: 'Courier New', Consolas, monospace; 
+        }
+        .yacho-input:focus { background-color: rgba(59, 130, 246, 0.1); }
+
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #e5e7eb; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; border: 2px solid #e5e7eb; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type="number"] { -moz-appearance: textfield; }
+
+        .mode-backward .col-is-header, .mode-backward .col-is-cell { display: none; }
+        .mode-average #thead-normal { display: none; }
+        .mode-forward #thead-average, .mode-backward #thead-average { display: none; }
+        
+        @keyframes popIn { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .score-anim { animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        
+        .tora-border {
+            background: repeating-linear-gradient(-45deg, #fbbf24, #fbbf24 10px, #1f2937 10px, #1f2937 20px);
+            padding: 4px;
+            border-radius: 4px;
+        }
+
+        /* ==========================================
+           印刷・PDF出力用の専用レイアウト設定
+           ========================================== */
+        @media print {
+            body { 
+                background: none !important; 
+                background-color: white !important;
+                color: black !important;
+                padding: 0; margin: 0;
+            }
+            /* 不要な要素（ボタン、黒板、設定、一覧など）を完全に非表示 */
+            .kokuban-header, .no-print, button, #history-panel, #loading, .binder-panel::before {
+                display: none !important;
+            }
+            .binder-panel {
+                border: none !important;
+                border-top: none !important;
+                box-shadow: none !important;
+                background-color: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            /* 入力欄（input, select）の枠線や背景を消し、印字された文字のように見せる */
+            input, select {
+                border: none !important;
+                background: transparent !important;
+                box-shadow: none !important;
+                color: black !important;
+                -webkit-appearance: none;
+                -moz-appearance: none;
+                appearance: none;
+            }
+            input::placeholder { color: transparent !important; }
+            /* 下線等の調整 */
+            .border-b-2 { border-bottom-width: 1px !important; border-color: #000 !important; }
+            
+            /* テーブルの印刷調整（白黒・罫線を明確に） */
+            .yacho-table { margin-top: 10px; margin-bottom: 20px; }
+            .yacho-table th, .yacho-table td {
+                border: 1px solid #000 !important;
+                padding: 4px !important;
+            }
+            .yacho-table th { 
+                background-color: #f0f0f0 !important; 
+                color: #000 !important; 
+                -webkit-print-color-adjust: exact; 
+                print-color-adjust: exact; 
+            }
+            /* 画面上の背景色指定を印刷時はクリアする */
+            .bg-blue-50, .bg-green-50, .bg-red-50, .bg-gray-50, .bg-gray-100, .bg-gray-200 { 
+                background-color: transparent !important; 
+            }
+            .bg-red-100 { background-color: transparent !important; }
+            /* 赤文字などの色を黒に統一（白黒印刷を想定） */
+            .text-blue-900, .text-green-800, .text-green-900, .text-red-800, .text-red-600, .text-gray-800, .text-gray-600 {
+                color: #000 !important;
+            }
+            /* 削除ボタンの列（一番右）を印刷しない */
+            .yacho-table th:last-child, .yacho-table td:last-child { 
+                display: none !important; 
+            }
+            /* 改ページ制御 */
+            table { page-break-inside: auto; }
+            tr { page-break-inside: avoid; page-break-after: auto; }
+            thead { display: table-header-group; }
+        }
+    </style>
+</head>
+<body class="text-gray-800 min-h-screen p-2 md:p-6">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- 現場黒板風ヘッダー (印刷時は非表示) -->
+        <header class="kokuban-header p-4 md:p-6 text-center mb-6">
+            <h1 class="text-2xl md:text-4xl font-bold mb-2 tracking-wider"><i class="fa-solid fa-ruler-combined mr-3"></i>水準・縦断測量 野帳管理システム</h1>
+            <p class="text-gray-200 text-sm md:text-base font-medium">品質確保・コンプライアンス順守・100点満点精度評価</p>
+        </header>
+
+        <div id="app-content" class="hidden space-y-6">
+            
+            <!-- メインクリップボード -->
+            <div class="binder-panel p-4 md:p-6 mt-8">
+                
+                <!-- 観測設定セクション (印刷時は非表示にするために 'no-print' クラス付与) -->
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-300 mb-6 shadow-sm no-print">
+                    <div class="flex items-center mb-3 border-b-2 border-gray-800 pb-2">
+                        <i class="fa-solid fa-clipboard-list text-xl mr-2 text-gray-800"></i>
+                        <h3 class="font-bold text-gray-800 text-lg">作業計画・使用機器の設定 <span class="text-xs text-red-600 ml-2 font-normal">※観測前に必ず設定すること</span></h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1">測量の種類</label>
+                            <select id="survey-method" class="w-full px-3 py-2 border-2 border-gray-300 rounded focus:border-blue-500 outline-none bg-white font-bold">
+                                <option value="">選択してください</option>
+                                <option value="leveling">水準測量</option>
+                                <option value="river_crossing">渡海水準測量</option>
+                                <option value="profile">縦断測量</option>
+                            </select>
+                        </div>
+                        <div id="sub-setting-container" class="hidden">
+                            <label id="sub-setting-label" class="block text-sm font-bold text-gray-700 mb-1">詳細設定</label>
+                            <select id="sub-setting" class="w-full px-3 py-2 border-2 border-gray-300 rounded focus:border-blue-500 outline-none bg-white font-bold">
+                                <!-- JSで動的に追加 -->
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1" title="仕様書で定められた距離">委託距離 (km)</label>
+                            <input type="number" id="commissioned-distance" step="0.001" min="0" placeholder="例: 1.5" class="w-full px-3 py-2 border-2 border-gray-300 rounded focus:border-blue-500 outline-none bg-white font-mono font-bold text-blue-800">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2 pt-2 border-t border-gray-200">
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fa-solid fa-camera mr-1 text-gray-500"></i>使用機械</label>
+                            <select id="machine-type" class="w-full px-3 py-2 border-2 border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-bold">
+                                <option value="">選択してください</option>
+                                <option value="digital_level">電子レベル</option>
+                                <option value="tilting_level">チルチングレベル</option>
+                                <option value="total_station">トータルステーション</option>
+                            </select>
+                        </div>
+                        <div id="staff-settings-container" class="hidden md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fa-solid fa-ruler-vertical mr-1 text-gray-500"></i>標尺の種類</label>
+                                <select id="staff-type" class="w-full px-3 py-2 border-2 border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-bold">
+                                    <option value="barcode">バーコード標尺</option>
+                                    <option value="aluminum">アルミ標尺(箱尺)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-1">標尺の等級</label>
+                                <select id="staff-grade" class="w-full px-3 py-2 border-2 border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-bold">
+                                    <option value="1">1級標尺(インバー)</option>
+                                    <option value="2" selected>2級標尺</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex items-end md:col-start-4">
+                            <button id="btn-setting-complete" class="w-full bg-blue-800 hover:bg-blue-900 text-white py-2 px-4 rounded font-bold transition duration-200 shadow hidden flex justify-center items-center">
+                                <i class="fa-solid fa-check-circle mr-2"></i>設定を完了する
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="leveling-settings-container" class="hidden col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-gray-200 mt-2">
+                        <div class="md:col-span-1">
+                            <label class="block text-sm font-bold text-gray-700 mb-1">路線の形</label>
+                            <select id="route-shape-setting" class="w-full px-3 py-2 border border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-bold">
+                                <option value="round_trip">往復</option>
+                                <option value="connected">結合</option>
+                                <option value="closed">閉合</option>
+                                <option value="radiation">放射</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="profile-settings-container" class="hidden col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-gray-200 mt-2">
+                        <div class="md:col-span-1">
+                            <label class="block text-sm font-bold text-gray-700 mb-1">前後観測 (m) <span class="text-xs font-normal text-gray-500">※未入力で不要</span></label>
+                            <input type="number" id="profile-margin" step="0.1" min="0" placeholder="例: 20" class="w-full px-3 py-2 border border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-mono font-bold">
+                        </div>
+                        <div class="md:col-span-1">
+                            <label class="block text-sm font-bold text-gray-700 mb-1">IP点(交角点)の設置</label>
+                            <select id="ip-point-setting" class="w-full px-3 py-2 border border-gray-300 bg-white rounded focus:border-blue-500 outline-none font-bold">
+                                <option value="none">なし</option>
+                                <option value="exist">あり</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 主任技術者からの事前アドバイスパネル (印刷時は非表示) -->
+                <div id="chief-advice-panel" class="mb-6 border-2 border-yellow-500 rounded bg-white shadow-md hidden transition-all duration-300 no-print">
+                    <div class="tora-border">
+                        <div class="px-4 py-2 bg-yellow-400 font-bold flex items-center text-lg text-gray-900">
+                            <i class="fa-solid fa-hard-hat mr-2"></i>主任技術者からの作業前指示（安全・品質・法令）
+                        </div>
+                    </div>
+                    <div id="chief-advice-content" class="p-4 text-sm leading-relaxed text-gray-800">
+                    </div>
+                </div>
+
+                <!-- ボタン群 (印刷時は非表示) -->
+                <div class="flex justify-end gap-2 mb-4 no-print border-b-2 border-gray-800 pb-4">
+                    <button id="btn-new" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded font-bold shadow transition-colors text-sm">
+                        <i class="fa-solid fa-file mr-1"></i>新規作成
+                    </button>
+                    <button id="btn-save" class="bg-blue-700 hover:bg-blue-800 text-white py-2 px-4 rounded font-bold shadow transition-colors text-sm">
+                        <i class="fa-solid fa-save mr-1"></i>クラウド保存
+                    </button>
+                    <button id="btn-export" class="bg-green-700 hover:bg-green-800 text-white py-2 px-4 rounded font-bold shadow transition-colors text-sm" title="Excel形式でダウンロード">
+                        <i class="fa-solid fa-file-excel mr-1"></i>Excel出力
+                    </button>
+                    <!-- PDF出力（標準印刷機能の呼び出し）に変更 -->
+                    <button id="btn-print" class="bg-red-700 hover:bg-red-800 text-white py-2 px-4 rounded font-bold shadow transition-colors text-sm" title="PDFとして保存・印刷">
+                        <i class="fa-solid fa-file-pdf mr-1"></i>PDF / 印刷
+                    </button>
+                </div>
+
+                <!-- 現場名・路線名等のヘッダー情報 (印刷時はここから表示される) -->
+                <!-- 印刷用のシートタイトル（画面上は隠す、印刷時に表示） -->
+                <h2 id="print-sheet-title" class="hidden font-bold text-2xl mb-4 text-center border-b-4 border-gray-800 pb-2 print:block">水準測量観測手簿</h2>
+
+                <div class="mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mb-2">
+                        <div class="flex items-end border-b border-gray-400">
+                            <label class="text-sm font-bold text-gray-700 w-24 shrink-0">現場名</label>
+                            <input type="text" id="site-name" placeholder="例: 〇〇改良工事" class="w-full px-2 py-1 bg-transparent outline-none font-bold text-gray-800">
+                        </div>
+                        <div class="flex items-end border-b border-gray-400">
+                            <label class="text-sm font-bold text-gray-700 w-24 shrink-0">路線区間</label>
+                            <input type="text" id="route-name" placeholder="例: BM1 ～ BM2" class="w-full px-2 py-1 bg-transparent outline-none font-bold text-gray-800">
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-2 text-sm border-b-2 border-gray-800 pb-3">
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">機械名</label>
+                            <input type="text" id="info-machine-name" placeholder="例: SDL1X" class="outline-none bg-transparent py-1">
+                        </div>
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">NO.</label>
+                            <input type="text" id="info-machine-no" placeholder="機番" class="outline-none bg-transparent py-1">
+                        </div>
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">観測年月日</label>
+                            <input type="date" id="info-date" class="outline-none bg-transparent py-1 text-gray-800">
+                        </div>
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">観測者</label>
+                            <input type="text" id="info-observer" placeholder="氏名" class="outline-none bg-transparent py-1 text-center print:text-left">
+                        </div>
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">記帳者</label>
+                            <input type="text" id="info-recorder" placeholder="氏名" class="outline-none bg-transparent py-1 text-center print:text-left">
+                        </div>
+                        <div class="flex flex-col border-b border-gray-300 print:border-none">
+                            <label class="font-bold text-gray-600 text-xs">点検者</label>
+                            <input type="text" id="info-inspector" placeholder="氏名" class="outline-none bg-transparent py-1 text-center print:text-left">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- タブと情報表示 (印刷時は非表示) -->
+                <div class="flex border-b-2 border-gray-400 mb-2 justify-between items-end flex-wrap gap-2 no-print">
+                    <div class="flex">
+                        <button id="tab-forward" class="px-6 py-2 bg-white text-gray-800 font-bold border-t-2 border-l-2 border-r-2 border-gray-400 rounded-t -mb-[2px] z-10 shadow-[0_-2px_4px_rgba(0,0,0,0.05)]">往路 (F)</button>
+                        <button id="tab-backward" class="px-6 py-2 bg-gray-200 text-gray-500 font-bold border-b-2 border-gray-400 hover:bg-gray-300 rounded-t transition-colors">復路 (B)</button>
+                        <button id="tab-average" class="px-6 py-2 bg-gray-200 text-gray-500 font-bold border-b-2 border-gray-400 hover:bg-gray-300 rounded-t transition-colors ml-1" title="往復の較差と平均高を計算">平均 (Avg)</button>
+                    </div>
+                    
+                    <div class="flex items-center gap-2 mb-1">
+                        <div id="forward-margin-display" class="hidden text-xs font-bold text-white bg-orange-600 px-3 py-1 rounded shadow">
+                            <i class="fa-solid fa-arrows-left-right mr-1"></i>前後観測: <span id="display-margin-val" class="text-base font-mono">0</span> m
+                        </div>
+                        <div class="text-sm font-bold text-gray-800 px-3 py-1 bg-white border-2 border-gray-400 rounded shadow-sm flex items-center">
+                            計: <span id="display-total-dist" class="text-blue-700 font-mono text-lg ml-2">0.0</span> <span class="ml-1">m</span>
+                            <span id="dist-warning-icon" class="hidden text-red-600 ml-2 animate-pulse" title="委託距離を満たしていません"><i class="fa-solid fa-triangle-exclamation text-lg"></i> 不足</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 野帳テーブル -->
+                <div class="overflow-x-auto shadow-sm border-2 border-gray-400 print:border-none print:shadow-none">
+                    <table id="table-container" class="yacho-table text-sm text-left mode-forward">
+                        <thead id="thead-normal">
+                            <tr>
+                                <th class="px-2 py-2 w-28 text-center font-bold">点名<br><span class="text-[10px] font-normal">Point</span></th>
+                                <th class="px-2 py-2 w-24 text-center font-bold" title="不足時は赤くなります">単距離(m)<br><span class="text-[10px] font-normal">Dist.</span></th>
+                                <th class="px-2 py-2 w-28 text-center font-bold">後視(B.S)<br><span class="text-[10px] font-normal">+</span></th>
+                                <th class="px-2 py-2 w-28 text-center font-bold">器械高(I.H)<br><span class="text-[10px] font-normal">Height</span></th>
+                                <th class="col-is-header px-2 py-2 w-28 text-center font-bold">杭下(I.S)<br><span class="text-[10px] font-normal">-</span></th>
+                                <th class="px-2 py-2 w-28 text-center font-bold">前視(F.S)<br><span class="text-[10px] font-normal">-</span></th>
+                                <th class="px-2 py-2 w-28 text-center font-bold border-r-2 border-gray-400">地盤高(G.H)<br><span class="text-[10px] font-normal">Elevation</span></th>
+                                <th class="px-1 py-2 w-8 text-center bg-gray-100 border-none print:hidden"><i class="fa-solid fa-ellipsis-vertical text-gray-400"></i></th>
+                            </tr>
+                        </thead>
+                        <!-- 平均タブ用のヘッダー -->
+                        <thead id="thead-average" class="hidden">
+                            <tr>
+                                <th class="px-2 py-2 w-28 text-center font-bold">点名</th>
+                                <th class="px-2 py-2 w-28 text-center font-bold bg-blue-50 text-blue-900 border-b-2 border-b-blue-300">累積距離(m)</th>
+                                <th class="px-2 py-2 w-28 text-center font-bold">往路高(m)</th>
+                                <th class="px-2 py-2 w-28 text-center font-bold">復路高(m)</th>
+                                <th class="px-2 py-2 w-28 text-center font-bold bg-red-50 text-red-800 border-b-2 border-b-red-300">往復較差(mm)</th>
+                                <th class="px-2 py-2 w-28 text-center font-bold bg-gray-100 text-gray-600">制限値(mm)</th>
+                                <th class="px-2 py-2 w-32 text-center font-bold border-r-2 border-gray-400 bg-green-50 text-green-900 border-b-2 border-b-green-300">往復平均高(G.H)</th>
+                                <th class="px-1 py-2 w-8 text-center bg-gray-100 border-none print:hidden"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-forward" class="bg-white"></tbody>
+                        <tbody id="tbody-backward" class="bg-white hidden"></tbody>
+                        <tbody id="tbody-average" class="bg-white hidden"></tbody>
+                    </table>
+                </div>
+
+                <!-- 入力完了・判定ボタン (印刷時非表示) -->
+                <div class="mt-8 mb-6 flex justify-center no-print">
+                    <button id="btn-complete" class="bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 px-12 rounded border-b-4 border-gray-600 shadow-lg active:border-b-0 active:translate-y-1 transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-stamp text-xl"></i>
+                        <span class="text-lg tracking-widest">審査・判定を実行する</span>
+                    </button>
+                </div>
+
+                <!-- 精度管理計算書 -->
+                <div class="mt-4 border-2 border-gray-400 bg-white shadow-sm print:mt-10 print:border-none print:shadow-none">
+                    <div class="bg-gray-200 px-4 py-2 border-b-2 border-gray-400 font-bold text-gray-800 flex justify-between items-center print:bg-white print:border-b-4">
+                        <div class="print:text-xl"><i class="fa-solid fa-calculator mr-2"></i>精度管理計算書</div>
+                        <span id="calc-judge-badge" class="px-3 py-1 bg-gray-300 text-gray-600 rounded text-xs font-bold border border-gray-400 print:border-2 print:text-sm">未判定</span>
+                    </div>
+                    <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2 print:gap-10">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-1">測量の等級 (自動連動)</label>
+                                <select id="accuracy-grade" class="w-full px-3 py-2 border border-gray-300 bg-gray-100 outline-none pointer-events-none font-bold text-gray-600" tabindex="-1">
+                                    <option value="1">1級水準測量 (2.5mm√S)</option>
+                                    <option value="2">2級水準測量 (5.0mm√S)</option>
+                                    <option value="3" selected>3級水準測量 (10.0mm√S)</option>
+                                    <option value="4">4級水準測量 (20.0mm√S)</option>
+                                    <option value="5">簡易水準測量 (40.0mm√S)</option>
+                                </select>
+                            </div>
+                            <div class="relative">
+                                <label class="block text-sm font-bold text-gray-700 mb-1">観測距離 S (km) <span class="text-xs text-blue-600 font-normal ml-2 no-print">※野帳から自動集計</span></label>
+                                <input type="number" id="accuracy-distance" step="0.001" min="0.001" placeholder="0.000" class="w-full px-3 py-2 border-2 border-blue-400 bg-blue-50 focus:border-blue-600 outline-none font-mono font-bold text-blue-900 text-lg">
+                            </div>
+                        </div>
+                        <div class="p-3 border-2 border-gray-300 rounded space-y-2 text-sm bg-gray-50 print:bg-white print:border-black">
+                            <div class="flex justify-between border-b border-gray-300 pb-1">
+                                <span class="text-gray-600 font-bold">往路 高低差:</span>
+                                <div><span class="font-mono font-bold text-gray-800 print:text-lg" id="calc-diff-f">0.0000</span> m</div>
+                            </div>
+                            <div class="flex justify-between border-b border-gray-300 pb-1">
+                                <span class="text-gray-600 font-bold">復路 高低差:</span>
+                                <div><span class="font-mono font-bold text-gray-800 print:text-lg" id="calc-diff-b">0.0000</span> m</div>
+                            </div>
+                            <div class="flex justify-between font-bold text-base pt-1 items-center">
+                                <span class="text-gray-800">往復の較差:</span>
+                                <div><span class="font-mono text-xl" id="calc-discrepancy">0.0</span> mm</div>
+                            </div>
+                            <div class="flex justify-between font-bold text-base mt-2 px-2 py-1 bg-gray-200 border border-gray-400 print:bg-white print:border-black">
+                                <span class="text-gray-800">許容制限値:</span>
+                                <div><span class="font-mono text-gray-800" id="calc-limit">-</span> mm</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 審査・指導コメントパネル -->
+                <div id="advice-panel-container" class="mt-6 hidden transition-all duration-300">
+                    <div id="advice-header" class="px-4 py-3 border-b-2 font-bold flex items-center text-lg print:border-black"></div>
+                    <div id="advice-content" class="p-4 text-sm leading-relaxed bg-white border-2 border-t-0 print:border-black"></div>
+                </div>
+
+            </div>
+
+            <!-- 保存データ一覧 (印刷時は非表示) -->
+            <div id="history-panel" class="binder-panel p-4 md:p-6 shadow-sm border border-gray-200 mt-6 no-print">
+                <div class="flex justify-between items-center mb-4 border-b-2 border-gray-400 pb-2">
+                    <h2 class="text-lg font-bold text-gray-800"><i class="fa-solid fa-folder-open mr-2 text-yellow-600"></i>野帳保管庫（保存データ一覧）</h2>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="history-list"></div>
+                <div id="empty-message" class="text-center text-gray-400 py-8 hidden">
+                    <i class="fa-solid fa-box-open text-4xl mb-3"></i>
+                    <p class="font-bold">保存された野帳データはありません。</p>
+                </div>
+            </div>
+
+        </div>
+        
+        <div id="loading" class="text-center py-20 no-print">
+            <i class="fa-solid fa-spinner fa-spin text-4xl text-gray-500 mb-4"></i>
+            <p class="text-gray-600 font-bold tracking-widest">システム起動中...</p>
+        </div>
+
+        <div id="message-modal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center z-50 no-print">
+            <div class="bg-white rounded p-6 max-w-sm w-full mx-4 shadow-2xl border-t-4 border-blue-600">
+                <h3 id="modal-title" class="text-lg font-bold mb-2">通知</h3>
+                <p id="modal-message" class="text-gray-700 mb-5 font-medium"></p>
+                <div class="text-right">
+                    <button id="modal-close" class="bg-gray-800 text-white px-5 py-2 rounded hover:bg-gray-900 font-bold shadow">確認</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center z-50 no-print">
+            <div class="bg-white rounded p-6 max-w-sm w-full mx-4 shadow-2xl border-t-4 border-red-600">
+                <h3 class="text-lg font-bold mb-2 text-red-600"><i class="fa-solid fa-triangle-exclamation mr-2"></i>データ破棄の確認</h3>
+                <p class="text-gray-700 mb-6 font-medium">この野帳データを本当に破棄しますか？<br>この操作は取り消せません。</p>
+                <div class="flex justify-end gap-3">
+                    <button id="confirm-cancel" class="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300 font-bold border border-gray-400 shadow-sm">キャンセル</button>
+                    <button id="confirm-ok" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 font-bold shadow">破棄する</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 行のテンプレート -->
+    <template id="row-template">
+        <tr class="hover:bg-blue-50 transition duration-150 border-b border-gray-300">
+            <td class="p-0 border border-[#7cb342]"><input type="text" class="yacho-input col-name text-center font-bold text-gray-800" placeholder="BM, TP..."></td>
+            <td class="p-0 border border-[#7cb342] bg-blue-50/50"><input type="number" step="0.01" min="0" class="yacho-input col-dist text-right text-blue-900 font-bold transition-colors duration-300" placeholder="0.0" title="前の点からの距離"></td>
+            <td class="p-0 border border-[#7cb342]"><input type="number" step="0.001" class="yacho-input col-bf text-right text-gray-800" placeholder="0.000"></td>
+            <td class="p-0 border border-[#7cb342] bg-gray-100"><input type="number" step="0.001" class="yacho-input col-ih text-right font-bold text-gray-600" readonly tabindex="-1"></td>
+            <td class="p-0 border border-[#7cb342] col-is-cell bg-green-50/50"><input type="number" step="0.001" class="yacho-input col-is text-right text-green-800" placeholder="0.000" title="杭下(中間視)"></td>
+            <td class="p-0 border border-[#7cb342]"><input type="number" step="0.001" class="yacho-input col-fs text-right text-gray-800" placeholder="0.000"></td>
+            <td class="p-0 border border-[#7cb342] border-r-2 border-r-gray-400"><input type="number" step="0.001" class="yacho-input col-gh text-right text-gray-800 font-bold transition-colors" placeholder="0.000"></td>
+            <td class="p-0 text-center border-none align-middle bg-gray-100 print:hidden">
+                <button type="button" class="btn-delete text-gray-400 hover:text-red-600 w-full h-full py-2 transition-colors" tabindex="-1" title="行を削除">
+                    <i class="fa-solid fa-times"></i>
+                </button>
+            </td>
+        </tr>
+    </template>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, query, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const loadingEl = document.getElementById('loading');
+        const appContentEl = document.getElementById('app-content');
+        
+        const surveyMethodSelect = document.getElementById('survey-method');
+        const subSettingContainer = document.getElementById('sub-setting-container');
+        const subSettingLabel = document.getElementById('sub-setting-label');
+        const subSettingSelect = document.getElementById('sub-setting');
+        const commissionedDistanceInput = document.getElementById('commissioned-distance');
+        
+        const machineTypeSelect = document.getElementById('machine-type');
+        const staffSettingsContainer = document.getElementById('staff-settings-container');
+        const staffTypeSelect = document.getElementById('staff-type');
+        const staffGradeSelect = document.getElementById('staff-grade');
+
+        const btnSettingComplete = document.getElementById('btn-setting-complete');
+        const levelingSettingsContainer = document.getElementById('leveling-settings-container');
+        const routeShapeSettingSelect = document.getElementById('route-shape-setting');
+        const profileSettingsContainer = document.getElementById('profile-settings-container');
+        const profileMarginInput = document.getElementById('profile-margin');
+        const ipPointSettingSelect = document.getElementById('ip-point-setting');
+        const forwardMarginDisplay = document.getElementById('forward-margin-display');
+        const displayMarginVal = document.getElementById('display-margin-val');
+
+        const chiefAdvicePanel = document.getElementById('chief-advice-panel');
+        const chiefAdviceContent = document.getElementById('chief-advice-content');
+
+        const siteNameInput = document.getElementById('site-name');
+        const routeNameInput = document.getElementById('route-name');
+        const infoMachineName = document.getElementById('info-machine-name');
+        const infoMachineNo = document.getElementById('info-machine-no');
+        const infoDate = document.getElementById('info-date');
+        const infoObserver = document.getElementById('info-observer');
+        const infoRecorder = document.getElementById('info-recorder');
+        const infoInspector = document.getElementById('info-inspector');
+        
+        const tabF = document.getElementById('tab-forward');
+        const tabB = document.getElementById('tab-backward');
+        const tabA = document.getElementById('tab-average');
+        
+        const tbodyF = document.getElementById('tbody-forward');
+        const tbodyB = document.getElementById('tbody-backward');
+        const tbodyA = document.getElementById('tbody-average');
+        
+        const tableContainer = document.getElementById('table-container');
+        const rowTemplate = document.getElementById('row-template');
+        const displayTotalDist = document.getElementById('display-total-dist');
+        const distWarningIcon = document.getElementById('dist-warning-icon');
+        const printSheetTitle = document.getElementById('print-sheet-title');
+        
+        const historyList = document.getElementById('history-list');
+        const emptyMessage = document.getElementById('empty-message');
+        
+        const modal = document.getElementById('message-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const confirmModal = document.getElementById('confirm-modal');
+
+        let db, auth, currentUser, unsubscribeSnapshot;
+        let currentDocId = null;
+        let docToDelete = null; 
+        let savedDataList = [];
+        let currentMode = 'forward'; 
+
+        // 初期ロード時に今日の日付をセット
+        infoDate.valueAsDate = new Date();
+
+        function showMessage(title, message, isError = false) {
+            modalTitle.textContent = title;
+            modalTitle.className = `text-lg font-bold mb-2 ${isError ? 'text-red-600' : 'text-blue-700'}`;
+            modalMessage.innerHTML = message;
+            modal.classList.remove('hidden');
+        }
+        document.getElementById('modal-close').addEventListener('click', () => modal.classList.add('hidden'));
+
+        // ==========================================
+        // 観測設定と事前アドバイス表示ロジック
+        // ==========================================
+        surveyMethodSelect.addEventListener('change', (e) => {
+            const method = e.target.value;
+            subSettingSelect.innerHTML = '';
+            chiefAdvicePanel.classList.add('hidden');
+            profileSettingsContainer.classList.add('hidden');
+            levelingSettingsContainer.classList.add('hidden');
+            forwardMarginDisplay.classList.add('hidden');
+            
+            if (method === 'leveling') {
+                subSettingLabel.textContent = '水準測量の等級';
+                subSettingSelect.innerHTML = `
+                    <option value="1">1級水準測量</option>
+                    <option value="2">2級水準測量</option>
+                    <option value="3" selected>3級水準測量</option>
+                    <option value="4">4級水準測量</option>
+                    <option value="5" class="font-bold text-blue-700">簡易水準測量</option>
+                `;
+                subSettingContainer.classList.remove('hidden');
+                levelingSettingsContainer.classList.remove('hidden');
+            } else if (method === 'river_crossing') {
+                subSettingLabel.textContent = '渡海水準測量の等級';
+                subSettingSelect.innerHTML = `
+                    <option value="1">1級渡海水準測量</option>
+                    <option value="2">2級渡海水準測量</option>
+                    <option value="3" selected>3級渡海水準測量</option>
+                    <option value="4">4級渡海水準測量</option>
+                `;
+                subSettingContainer.classList.remove('hidden');
+            } else if (method === 'profile') {
+                subSettingLabel.textContent = '縦断測量の種類';
+                subSettingSelect.innerHTML = `
+                    <option value="road">道路縦断測量</option>
+                    <option value="river">河川縦断測量</option>
+                    <option value="irrigation">用水路・排水路縦断測量</option>
+                    <option value="normal_line" class="font-bold text-blue-700">法線測量</option>
+                    <option value="slope" class="font-bold text-blue-700">法面測量</option>
+                    <option value="kikou" class="font-bold text-blue-700">起工測量</option>
+                    <option value="dekidaka" class="font-bold text-blue-700">出来高測量</option>
+                `;
+                subSettingContainer.classList.remove('hidden');
+                profileSettingsContainer.classList.remove('hidden');
+                
+                if (currentMode === 'forward' && profileMarginInput.value) {
+                    forwardMarginDisplay.classList.remove('hidden');
+                }
+            } else {
+                subSettingContainer.classList.add('hidden');
+            }
+            checkSettingCompleteVisibility();
+            updateRealtimeStats();
+        });
+
+        machineTypeSelect.addEventListener('change', (e) => {
+            const mType = e.target.value;
+            if (mType === 'digital_level' || mType === 'tilting_level') {
+                staffSettingsContainer.classList.remove('hidden');
+            } else {
+                staffSettingsContainer.classList.add('hidden');
+            }
+            checkSettingCompleteVisibility();
+        });
+
+        function checkSettingCompleteVisibility() {
+            if (surveyMethodSelect.value !== '' && machineTypeSelect.value !== '') {
+                btnSettingComplete.classList.remove('hidden');
+            } else {
+                btnSettingComplete.classList.add('hidden');
+            }
+        }
+
+        commissionedDistanceInput.addEventListener('input', updateRealtimeStats);
+
+        profileMarginInput.addEventListener('input', (e) => {
+            const val = e.target.value;
+            displayMarginVal.textContent = val || '0';
+            if (currentMode === 'forward' && val && surveyMethodSelect.value === 'profile') {
+                forwardMarginDisplay.classList.remove('hidden');
+            } else {
+                forwardMarginDisplay.classList.add('hidden');
+            }
+        });
+
+        btnSettingComplete.addEventListener('click', () => {
+            const method = surveyMethodSelect.value;
+            const subVal = subSettingSelect.value;
+            const subText = subSettingSelect.options[subSettingSelect.selectedIndex].text;
+            const mType = machineTypeSelect.value;
+            const sType = staffTypeSelect.value;
+            const sGrade = staffGradeSelect.value;
+            
+            let html = '';
+            
+            let machineAdvice = '';
+            if (mType === 'digital_level') {
+                machineAdvice = `<li class="text-blue-900"><strong>電子レベル：</strong> ピントの甘さは内部エラーの元。円形気泡管の点検・調整を必ず行うこと。</li>`;
+            } else if (mType === 'tilting_level') {
+                machineAdvice = `<li class="text-blue-900"><strong>チルチング：</strong> 観測直前の「気泡の合致」と「視差の消去」が命。作業前の視準軸点検を忘れずに。</li>`;
+            } else if (mType === 'total_station') {
+                machineAdvice = `<li class="text-blue-900"><strong>TS間接水準：</strong> 器械高・目標高の測り間違いが最大のミス。必ず2回測って確認。長距離視準は避けること。</li>`;
+            }
+
+            let staffAdvice = '';
+            if (mType === 'digital_level' || mType === 'tilting_level') {
+                if (sType === 'barcode') {
+                    staffAdvice = `<li class="text-blue-900"><strong>バーコード標尺：</strong> 汚れや傷は読定エラーになるため清拭すること。${sGrade === '1' ? '※1級のため温度伸縮に留意。' : ''}</li>`;
+                } else if (sType === 'aluminum') {
+                    staffAdvice = `<li class="text-blue-900"><strong>アルミ箱尺：</strong> 継ぎ目のロック機構の確認必須。段差誤差による10cm/1m読み違いが多発。${sGrade === '1' ? '<span class="text-red-600 bg-yellow-100 px-1 font-bold">※警告：1級水準にアルミ材は不可</span>' : ''}</li>`;
+                }
+            }
+
+            const equipAdviceBlock = `
+                <div class="mb-4 p-3 bg-blue-50 rounded border border-blue-200">
+                    <p class="font-bold text-blue-900 mb-1"><i class="fa-solid fa-wrench mr-1"></i>使用機器の取扱指導</p>
+                    <ul class="list-disc list-inside space-y-1 ml-1 text-sm font-medium">
+                        ${machineAdvice}
+                        ${staffAdvice}
+                    </ul>
+                </div>
+            `;
+
+            let methodAdviceBlock = '';
+            if (method === 'leveling') {
+                const accuracyGradeSelect = document.getElementById('accuracy-grade');
+                accuracyGradeSelect.value = subVal;
+                updateRealtimeStats(); 
+                let limitFormula = '';
+                if(subVal === '1') limitFormula = '2.5mm√S';
+                else if(subVal === '2') limitFormula = '5.0mm√S';
+                else if(subVal === '3') limitFormula = '10.0mm√S';
+                else if(subVal === '4') limitFormula = '20.0mm√S';
+                else if(subVal === '5') limitFormula = '40.0mm√S';
+                
+                const routeShape = document.getElementById('route-shape-setting').value;
+                let routeAdvice = '';
+                if (routeShape === 'connected') routeAdvice = '【結合】各既知点の異常の有無を確認できる。出発・到着の標高取扱いに注意。';
+                else if (routeShape === 'closed') routeAdvice = '【閉合】既知点の異常は発見不可。系統誤差が相殺されるリスクがあるため要注意。';
+                else if (routeShape === 'radiation') routeAdvice = '【放射】点検が効かないため、可能な限り別ルートからの点検を行うこと。';
+                else routeAdvice = '【往復】行きと帰りで独立した観測を行い、自己点検を徹底すること。';
+
+                methodAdviceBlock = `
+                    <p class="mb-1 font-bold text-gray-800 text-base border-l-4 border-gray-800 pl-2">■ ${subText}</p>
+                    <p class="mb-2 text-sm font-bold">往復較差の制限値: <strong class="text-red-600 bg-red-50 px-1 border border-red-200">${limitFormula}</strong></p>
+                    <ul class="list-disc list-inside space-y-1 ml-1 text-gray-800 text-sm font-medium">
+                        <li><strong>路線特性：</strong> <span class="text-blue-800">${routeAdvice}</span></li>
+                        ${subVal === '5' ? '<li class="text-yellow-700"><strong>簡易水準：</strong> 精度は緩いが粗誤は厳禁。写真刺針位置との整合に注意。</li>' : '<li><strong>基本操作：</strong> 等長視準の徹底と、三脚・尺台の確実な踏み込み。</li>'}
+                        <li><strong>分割観測：</strong> 1路線が長距離(目安2km以上)になる場合は、中間にKBMを設置すること。</li>
+                    </ul>
+                `;
+            } else if (method === 'river_crossing') {
+                const accuracyGradeSelect = document.getElementById('accuracy-grade');
+                accuracyGradeSelect.value = subVal;
+                updateRealtimeStats(); 
+                methodAdviceBlock = `
+                    <p class="mb-1 font-bold text-gray-800 text-base border-l-4 border-gray-800 pl-2">■ ${subText}</p>
+                    <p class="mb-2 text-sm text-red-600 font-bold">長距離視準となるため特殊誤差に厳重警戒。</p>
+                    <ul class="list-disc list-inside space-y-1 ml-1 text-gray-800 text-sm font-medium">
+                        <li><strong>同時観測：</strong> 気差・球差消去のため、対岸同士での「同時往復観測」を原則とする。</li>
+                        <li><strong>水面反射：</strong> 視準線は水面から十分に高く保つこと。</li>
+                        <li><strong>気象記録：</strong> 観測時の気温、風向・風速を必ず記録すること。</li>
+                    </ul>
+                `;
+            } else if (method === 'profile') {
+                let specificNote = '';
+                if (subVal === 'road') specificNote = '道路中心杭、変化点、現況構造物高を確実に押さえる。';
+                if (subVal === 'river') specificNote = '地盤高、現況水位、堤防天端、深浅基準点を漏らさない。';
+                if (subVal === 'irrigation') specificNote = '水路底付高、インバート高の観測が極めて重要。';
+                if (subVal === 'normal_line') specificNote = '【法線】境界近接のため隣接権利者への配慮を徹底。';
+                if (subVal === 'slope') specificNote = '【法面】滑落注意。三脚の据付は特に入念に行う。';
+                if (subVal === 'kikou') specificNote = '【起工】設計図書との不一致確認、基準点保全の徹底。';
+                if (subVal === 'dekidaka') specificNote = '【出来高】品質証明・請求根拠となるため社内規格値との照合必須。';
+
+                methodAdviceBlock = `
+                    <p class="mb-1 font-bold text-gray-800 text-base border-l-4 border-gray-800 pl-2">■ ${subText}</p>
+                    <ul class="list-disc list-inside space-y-1 ml-1 text-gray-800 text-sm font-medium">
+                        <li><strong class="text-red-600">中間視の注意：</strong> 杭下(I.S)観測時、<strong>器械高(I.H)は変わらない</strong>。</li>
+                        <li class="bg-yellow-50 p-1 border border-yellow-200"><strong>特記事項：</strong> ${specificNote}</li>
+                    </ul>
+                `;
+            }
+            
+            const commonLawWarning = `
+                <div class="mt-4 p-3 bg-white rounded border border-gray-300 shadow-sm">
+                    <p class="font-bold text-red-700 mb-2 text-sm border-b border-red-200 pb-1"><i class="fa-solid fa-scale-balanced mr-1"></i>法的リスク・コンプライアンス（重要）</p>
+                    <ul class="list-disc list-inside space-y-1 text-gray-800 text-xs font-medium">
+                        <li><strong>立入申請：</strong> 民有地へは必ず事前に地権者の承諾を得ること。無断立入は厳禁。</li>
+                        <li><strong>役杭の保全：</strong> 基準点や境界標の付近では絶対に損傷・移動させないこと。</li>
+                    </ul>
+                </div>
+            `;
+            html = equipAdviceBlock + methodAdviceBlock + commonLawWarning;
+            chiefAdviceContent.innerHTML = html;
+            chiefAdvicePanel.classList.remove('hidden');
+        });
+
+        // タブ切り替え
+        function switchTab(mode) {
+            currentMode = mode;
+            tabF.className = "px-6 py-2 bg-gray-200 text-gray-500 font-bold border-b-2 border-gray-400 hover:bg-gray-300 rounded-t transition-colors";
+            tabB.className = "px-6 py-2 bg-gray-200 text-gray-500 font-bold border-b-2 border-gray-400 hover:bg-gray-300 rounded-t transition-colors";
+            tabA.className = "px-6 py-2 bg-gray-200 text-gray-500 font-bold border-b-2 border-gray-400 hover:bg-gray-300 rounded-t transition-colors ml-1";
+            
+            tbodyF.classList.add('hidden');
+            tbodyB.classList.add('hidden');
+            tbodyA.classList.add('hidden');
+            tableContainer.classList.remove('mode-forward', 'mode-backward', 'mode-average');
+            
+            if(mode === 'forward') {
+                tabF.className = "px-6 py-2 bg-white text-gray-800 font-bold border-t-2 border-l-2 border-r-2 border-gray-400 rounded-t -mb-[2px] z-10 shadow-[0_-2px_4px_rgba(0,0,0,0.05)]";
+                tbodyF.classList.remove('hidden');
+                tableContainer.classList.add('mode-forward');
+                printSheetTitle.textContent = "水準測量観測手簿 (往路)";
+                if (surveyMethodSelect.value === 'profile' && profileMarginInput.value) {
+                    forwardMarginDisplay.classList.remove('hidden');
+                }
+            } else if (mode === 'backward') {
+                tabB.className = "px-6 py-2 bg-white text-gray-800 font-bold border-t-2 border-l-2 border-r-2 border-gray-400 rounded-t -mb-[2px] z-10 shadow-[0_-2px_4px_rgba(0,0,0,0.05)]";
+                tbodyB.classList.remove('hidden');
+                tableContainer.classList.add('mode-backward');
+                printSheetTitle.textContent = "水準測量観測手簿 (復路)";
+                forwardMarginDisplay.classList.add('hidden'); 
+                syncBackwardRoute();
+            } else if (mode === 'average') {
+                tabA.className = "px-6 py-2 bg-white text-gray-800 font-bold border-t-2 border-l-2 border-r-2 border-gray-400 rounded-t -mb-[2px] z-10 shadow-[0_-2px_4px_rgba(0,0,0,0.05)] ml-1";
+                tbodyA.classList.remove('hidden');
+                tableContainer.classList.add('mode-average');
+                printSheetTitle.textContent = "水準測量観測手簿 (平均・較差確認)";
+                forwardMarginDisplay.classList.add('hidden');
+                syncBackwardRoute(); 
+                syncAverageRoute(); 
+            }
+            updateRealtimeStats();
+        }
+        tabF.addEventListener('click', () => switchTab('forward'));
+        tabB.addEventListener('click', () => switchTab('backward'));
+        tabA.addEventListener('click', () => switchTab('average'));
+
+        function syncBackwardRoute() {
+            const fPoints = [];
+            let currentSectionDist = 0;
+            tbodyF.querySelectorAll('tr').forEach(r => {
+                const name = r.querySelector('.col-name').value.trim();
+                const fs = r.querySelector('.col-fs').value;
+                const is = r.querySelector('.col-is').value;
+                const dist = parseFloat(r.querySelector('.col-dist').value) || 0;
+                const ghInput = r.querySelector('.col-gh');
+                const ghVal = parseFloat(ghInput.value);
+                currentSectionDist += dist;
+                if (name && (fs !== '' || is === '')) {
+                    fPoints.push({ name: name, dist: currentSectionDist, gh: !isNaN(ghVal) ? ghVal.toFixed(3) : '' });
+                    currentSectionDist = 0; 
+                }
+            });
+            if (fPoints.length === 0) return;
+            fPoints.reverse();
+            while(tbodyB.children.length < fPoints.length) addRow(tbodyB);
+            const bRows = tbodyB.querySelectorAll('tr');
+            for (let i = 0; i < fPoints.length; i++) {
+                const row = bRows[i];
+                row.querySelector('.col-name').value = fPoints[i].name;
+                const distInput = row.querySelector('.col-dist');
+                const ghInput = row.querySelector('.col-gh');
+                if (i > 0) {
+                    const prevDist = fPoints[i - 1].dist;
+                    distInput.value = prevDist > 0 ? prevDist.toFixed(1) : '';
+                } else {
+                    distInput.value = '';
+                    if (fPoints[i].gh !== '') {
+                        ghInput.value = fPoints[i].gh;
+                        ghInput.parentElement.classList.remove('bg-white');
+                        ghInput.parentElement.classList.add('bg-blue-50'); 
+                    }
+                }
+            }
+            recalculateYacho(tbodyB);
+        }
+
+        function syncAverageRoute() {
+            tbodyA.innerHTML = '';
+            const grade = document.getElementById('accuracy-grade').value;
+            let coef = 10;
+            if(grade === '1') coef = 2.5;
+            else if(grade === '2') coef = 5.0;
+            else if(grade === '3') coef = 10.0;
+            else if(grade === '4') coef = 20.0;
+            else if(grade === '5') coef = 40.0;
+
+            const fPoints = [];
+            let currentDist = 0;
+
+            tbodyF.querySelectorAll('tr').forEach(r => {
+                const name = r.querySelector('.col-name').value.trim();
+                const dist = parseFloat(r.querySelector('.col-dist').value) || 0;
+                const fs = r.querySelector('.col-fs').value;
+                const is = r.querySelector('.col-is').value;
+                const gh = parseFloat(r.querySelector('.col-gh').value);
+                currentDist += dist;
+                if (name && (fs !== '' || is === '')) {
+                    fPoints.push({ name: name, cumulativeDist: currentDist, fGh: isNaN(gh) ? null : gh });
+                }
+            });
+
+            const bPoints = {};
+            tbodyB.querySelectorAll('tr').forEach(r => {
+                const name = r.querySelector('.col-name').value.trim();
+                const gh = parseFloat(r.querySelector('.col-gh').value);
+                if (name && !isNaN(gh)) bPoints[name] = gh;
+            });
+
+            fPoints.forEach(fp => {
+                const bGh = bPoints[fp.name] !== undefined ? bPoints[fp.name] : null;
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-blue-50 transition duration-150 border-b border-gray-300";
+                
+                let diffHtml = '<td class="p-2 border border-[#7cb342] text-center">-</td>';
+                let limitHtml = '<td class="p-2 border border-[#7cb342] text-center">-</td>';
+                let avgHtml = '<td class="p-2 border border-[#7cb342] border-r-2 border-gray-400 text-center">-</td>';
+                
+                if (fp.fGh !== null && bGh !== null) {
+                    const diffMm = Math.abs(fp.fGh - bGh) * 1000;
+                    const distKm = fp.cumulativeDist / 1000;
+                    const limit = distKm > 0 ? coef * Math.sqrt(distKm) : 0;
+                    const avgGh = (fp.fGh + bGh) / 2;
+                    const isOver = limit > 0 && diffMm > limit;
+                    const diffClass = isOver ? 'text-red-600 font-extrabold bg-red-100' : 'text-gray-800 font-bold';
+                    
+                    diffHtml = `<td class="p-2 border border-[#7cb342] text-right font-mono text-lg ${diffClass}">${diffMm.toFixed(1)}</td>`;
+                    limitHtml = `<td class="p-2 border border-[#7cb342] text-right text-gray-500 font-mono">${limit.toFixed(1)}</td>`;
+                    avgHtml = `<td class="p-2 border border-[#7cb342] border-r-2 border-gray-400 text-right text-green-900 font-bold text-lg bg-green-50">${avgGh.toFixed(3)}</td>`;
+                }
+
+                tr.innerHTML = `
+                    <td class="p-2 border border-[#7cb342] text-center font-bold text-gray-800 bg-gray-50">${escapeHTML(fp.name)}</td>
+                    <td class="p-2 border border-[#7cb342] text-right font-mono text-blue-900 bg-white">${fp.cumulativeDist.toFixed(1)}</td>
+                    <td class="p-2 border border-[#7cb342] text-right font-mono text-gray-800 bg-white">${fp.fGh !== null ? fp.fGh.toFixed(3) : '-'}</td>
+                    <td class="p-2 border border-[#7cb342] text-right font-mono text-gray-800 bg-white">${bGh !== null ? bGh.toFixed(3) : '-'}</td>
+                    ${diffHtml}
+                    ${limitHtml}
+                    ${avgHtml}
+                    <td class="border-none bg-gray-100 print:hidden"></td>
+                `;
+                tbodyA.appendChild(tr);
+            });
+        }
+
+        function addRow(tbody) { tbody.appendChild(rowTemplate.content.cloneNode(true)); }
+
+        tableContainer.addEventListener('change', (e) => {
+            if (e.target.tagName === 'INPUT' && e.target.type === 'number') {
+                const val = parseFloat(e.target.value);
+                if (!isNaN(val)) {
+                    if (e.target.classList.contains('col-dist')) e.target.value = val.toFixed(1);
+                    else if (e.target.classList.contains('col-bf') || e.target.classList.contains('col-fs') || e.target.classList.contains('col-is') || e.target.classList.contains('col-gh')) e.target.value = val.toFixed(3);
+                }
+                const activeTbody = currentMode === 'forward' ? tbodyF : tbodyB;
+                recalculateYacho(activeTbody);
+                updateRealtimeStats();
+            }
+        });
+
+        function recalculateYacho(tbody) {
+            const rows = tbody.querySelectorAll('tr');
+            let currentIH = null;
+            rows.forEach((row) => {
+                const bfInput = row.querySelector('.col-bf');
+                const ihInput = row.querySelector('.col-ih');
+                const isInput = row.querySelector('.col-is');
+                const fsInput = row.querySelector('.col-fs');
+                const ghInput = row.querySelector('.col-gh');
+
+                const bf = parseFloat(bfInput.value);
+                const is = parseFloat(isInput.value);
+                const fs = parseFloat(fsInput.value);
+                let gh = parseFloat(ghInput.value);
+
+                if (currentIH !== null) {
+                    if (!isNaN(fs)) {
+                        gh = currentIH - fs;
+                        ghInput.value = gh.toFixed(3);
+                        ghInput.parentElement.classList.add('bg-blue-50');
+                    } else if (!isNaN(is)) {
+                        gh = currentIH - is;
+                        ghInput.value = gh.toFixed(3);
+                        ghInput.parentElement.classList.add('bg-blue-50');
+                    } else if (isNaN(bf)) {
+                        if(ghInput.parentElement.classList.contains('bg-blue-50')) ghInput.parentElement.classList.remove('bg-blue-50');
+                    }
+                }
+
+                if (!isNaN(gh) && !isNaN(bf)) {
+                    const ih = gh + bf;
+                    ihInput.value = ih.toFixed(3);
+                    currentIH = ih;
+                } else if (!isNaN(bf) && isNaN(gh)) {
+                    ihInput.value = '';
+                    currentIH = null;
+                } else {
+                    ihInput.value = '';
+                }
+            });
+        }
+
+        function findWorstSection() {
+            const fPoints = [];
+            tbodyF.querySelectorAll('tr').forEach(r => {
+                const name = r.querySelector('.col-name').value.trim();
+                const gh = parseFloat(r.querySelector('.col-gh').value);
+                if(name && !isNaN(gh)) fPoints.push({name, gh});
+            });
+            const bPoints = [];
+            tbodyB.querySelectorAll('tr').forEach(r => {
+                const name = r.querySelector('.col-name').value.trim();
+                const gh = parseFloat(r.querySelector('.col-gh').value);
+                if(name && !isNaN(gh)) bPoints.push({name, gh});
+            });
+            if(fPoints.length < 2 || bPoints.length < 2) return null;
+
+            let maxDiff = -1, worstSection = "";
+            for(let i = 0; i < fPoints.length - 1; i++) {
+                const p1 = fPoints[i], p2 = fPoints[i+1];
+                const diffF = p2.gh - p1.gh;
+                const bIdx2 = bPoints.findIndex(p => p.name === p2.name);
+                const bIdx1 = bPoints.findIndex(p => p.name === p1.name);
+                if(bIdx2 !== -1 && bIdx1 !== -1 && bIdx2 < bIdx1) {
+                    const diffB = bPoints[bIdx1].gh - bPoints[bIdx2].gh;
+                    const discrepancy = Math.abs(diffF + diffB) * 1000;
+                    if(discrepancy > maxDiff) { maxDiff = discrepancy; worstSection = `${p1.name} ～ ${p2.name}`; }
+                }
+            }
+            if(maxDiff >= 0) return { section: worstSection, diff: maxDiff };
+            return null;
+        }
+
+        function updateRealtimeStats() {
+            const activeTbody = currentMode === 'forward' ? tbodyF : tbodyB;
+            let totalF = 0, totalB = 0;
+            tbodyF.querySelectorAll('.col-dist').forEach(el => totalF += parseFloat(el.value) || 0);
+            tbodyB.querySelectorAll('.col-dist').forEach(el => totalB += parseFloat(el.value) || 0);
+            
+            const activeTotal = currentMode === 'forward' ? totalF : totalB;
+            displayTotalDist.textContent = activeTotal.toFixed(1);
+
+            const maxDistM = Math.max(totalF, totalB);
+            if(maxDistM > 0) document.getElementById('accuracy-distance').value = (maxDistM / 1000).toFixed(3);
+
+            const commDistKm = parseFloat(commissionedDistanceInput.value);
+            const distInputCells = activeTbody.querySelectorAll('.col-dist');
+            
+            if (!isNaN(commDistKm) && commDistKm > 0) {
+                const commDistM = commDistKm * 1000;
+                if (activeTotal < commDistM) {
+                    distWarningIcon.classList.remove('hidden');
+                    distInputCells.forEach(input => {
+                        input.parentElement.classList.replace('bg-blue-50/50', 'bg-red-100');
+                        input.classList.add('text-red-700', 'font-bold');
+                    });
+                } else {
+                    distWarningIcon.classList.add('hidden');
+                    distInputCells.forEach(input => {
+                        input.parentElement.classList.replace('bg-red-100', 'bg-blue-50/50');
+                        input.classList.remove('text-red-700', 'font-bold');
+                    });
+                }
+            } else {
+                distWarningIcon.classList.add('hidden');
+                distInputCells.forEach(input => {
+                    input.parentElement.classList.replace('bg-red-100', 'bg-blue-50/50');
+                    input.classList.remove('text-red-700', 'font-bold');
+                });
+            }
+
+            const getDiff = (tbody) => {
+                const rows = tbody.querySelectorAll('tr');
+                if(rows.length < 2) return 0;
+                let startGH = null, endGH = null;
+                for(let i=0; i<rows.length; i++) {
+                    const gh = parseFloat(rows[i].querySelector('.col-gh').value);
+                    if(!isNaN(gh)) { startGH = gh; break; }
+                }
+                for(let i=rows.length-1; i>=0; i--) {
+                    const gh = parseFloat(rows[i].querySelector('.col-gh').value);
+                    if(!isNaN(gh)) { endGH = gh; break; }
+                }
+                if(startGH !== null && endGH !== null) return endGH - startGH;
+                return 0;
+            };
+
+            const diffF = getDiff(tbodyF);
+            const diffB = getDiff(tbodyB);
+            document.getElementById('calc-diff-f').textContent = diffF > 0 ? `+${diffF.toFixed(4)}` : diffF.toFixed(4);
+            document.getElementById('calc-diff-b').textContent = diffB > 0 ? `+${diffB.toFixed(4)}` : diffB.toFixed(4);
+            
+            const discrepancy = Math.abs((diffF + diffB) * 1000);
+            const discrepancyEl = document.getElementById('calc-discrepancy');
+            discrepancyEl.textContent = discrepancy.toFixed(1);
+
+            document.getElementById('calc-limit').textContent = "-";
+            const badge = document.getElementById('calc-judge-badge');
+            badge.textContent = "未判定";
+            badge.className = "px-3 py-1 bg-gray-300 text-gray-600 rounded text-xs font-bold border border-gray-400";
+            discrepancyEl.className = "font-mono text-xl text-gray-800";
+            document.getElementById('advice-panel-container').classList.add('hidden');
+        }
+
+        function runEvaluation() {
+            const diffF = parseFloat(document.getElementById('calc-diff-f').textContent);
+            const diffB = parseFloat(document.getElementById('calc-diff-b').textContent);
+            const discrepancy = Math.abs((diffF + diffB) * 1000);
+            const discrepancyEl = document.getElementById('calc-discrepancy');
+            const distanceStr = document.getElementById('accuracy-distance').value;
+            const grade = document.getElementById('accuracy-grade').value;
+            const distance = parseFloat(distanceStr); 
+            const badge = document.getElementById('calc-judge-badge');
+            const adviceContainer = document.getElementById('advice-panel-container');
+            const adviceHeader = document.getElementById('advice-header');
+            const adviceContent = document.getElementById('advice-content');
+
+            const surveyMethod = surveyMethodSelect.value;
+            const commDistKm = parseFloat(commissionedDistanceInput.value);
+            const mType = machineTypeSelect.value;
+            const sType = staffTypeSelect.value;
+
+            if (!mType) { showMessage("設定不足", "「使用する機械の種類」が選択されていません。<br>上部の観測設定を完了させてください。", true); return; }
+            if(isNaN(distance) || distance <= 0) { showMessage("入力不足", "判定を行うには、距離を入力して「観測距離 S (km)」を算出させてください。", true); return; }
+
+            let coef = 10;
+            if(grade === '1') coef = 2.5; else if(grade === '2') coef = 5.0; else if(grade === '3') coef = 10.0; else if(grade === '4') coef = 20.0; else if(grade === '5') coef = 40.0; 
+            const limit = coef * Math.sqrt(distance);
+            document.getElementById('calc-limit').textContent = limit.toFixed(1);
+
+            let score = 100;
+            let upAdvices = []; 
+            const diffRatio = discrepancy / limit;
+
+            if (diffRatio > 1.0) { score -= 50; upAdvices.push("制限値をオーバーしています。再測が必須です。"); }
+            else if (diffRatio > 0.8) { score -= 20; upAdvices.push("制限値ギリギリの精度です。次回は基本操作をより厳格に。"); }
+            else if (diffRatio > 0.5) { score -= 10; upAdvices.push("合格ですがやや誤差が蓄積しています。気差や沈下に注意。"); }
+            else { upAdvices.push("素晴らしい観測精度です！この技術レベルを維持してください。"); }
+
+            const worst = findWorstSection();
+            if (worst && worst.diff > (limit * 0.4) && diffRatio <= 1.0) {
+                score -= 10;
+                upAdvices.push(`「${escapeHTML(worst.section)}」区間で誤差が集中しています。急勾配な箇所では盛替点を増やしてください。`);
+            }
+
+            if (distance >= 2.0) {
+                score -= 10;
+                upAdvices.push("長距離は誤差が蓄積しやすいため、途中に仮BM（KBM）を設置して分割観測することを推奨します。");
+            }
+
+            if (!isNaN(commDistKm) && commDistKm > distance) {
+                score -= 20;
+                upAdvices.push(`<strong class="text-red-600 bg-red-50 p-1">【警告】観測延長（${distance.toFixed(3)}km）が委託距離（${commDistKm.toFixed(3)}km）に達していません。</strong>`);
+            }
+
+            let equipFeedback = "";
+            if (mType === 'digital_level' || mType === 'tilting_level') {
+                equipFeedback += "【機器点検】『観測前のレベルの視準軸誤差点検』および『標尺の円形気泡管点検』は確実に実施・記録しましたか？";
+                if (sType === 'aluminum') equipFeedback += "<br>【粗誤確認】アルミ箱尺の継ぎ目の引き出し不良による段差誤差がないか野帳の数値を再確認してください。";
+            } else if (mType === 'total_station') {
+                equipFeedback += "【点検・粗誤確認】TSの点検を実施しましたか？各測点での『器械高・目標高の入力ミス』がないか自己点検を行ってください。";
+            }
+
+            if (score < 0) score = 0;
+            let rank = "", rankColor = "", rankBg = "";
+            if (diffRatio > 1.0) { rank = "不合格"; rankColor = "text-white"; rankBg = "bg-red-600"; }
+            else if (score >= 90) { rank = "S"; rankColor = "text-yellow-900"; rankBg = "bg-yellow-400"; }
+            else if (score >= 80) { rank = "A"; rankColor = "text-white"; rankBg = "bg-blue-600"; }
+            else if (score >= 70) { rank = "B"; rankColor = "text-white"; rankBg = "bg-green-600"; }
+            else { rank = "C"; rankColor = "text-white"; rankBg = "bg-gray-600"; }
+
+            if(discrepancy <= limit) {
+                badge.textContent = "合格";
+                badge.className = "px-3 py-1 bg-green-600 text-white rounded text-xs font-bold shadow-inner";
+                discrepancyEl.className = "font-mono text-2xl text-green-700 font-bold";
+                adviceContainer.classList.remove('hidden');
+                adviceContainer.className = "mt-6 border-2 border-green-600 rounded bg-white shadow-md transition-all duration-300 score-anim";
+                adviceHeader.className = "px-4 py-3 bg-green-50 border-b-2 border-green-600 font-bold flex items-center text-lg text-green-900";
+                adviceHeader.innerHTML = '<i class="fa-solid fa-file-signature mr-2 text-green-700"></i>社内審査（品質管理）報告：合格';
+                
+                let adviceHtml = `
+                    <div class="flex items-center gap-6 mb-4 bg-gray-50 p-4 border border-gray-300">
+                        <div class="text-center bg-white p-3 border-2 border-gray-400 shadow-sm">
+                            <p class="text-xs text-gray-500 font-bold mb-1 border-b border-gray-200">総合スコア</p>
+                            <div class="text-5xl font-black text-gray-800 tracking-tighter">${score}<span class="text-xl text-gray-500 font-normal">点</span></div>
+                        </div>
+                        <div class="flex-1 pl-2">
+                            <div class="flex items-center mb-2">
+                                <span class="font-bold text-gray-800 text-base mr-3">評価ランク:</span>
+                                <span class="${rankBg} ${rankColor} text-xl font-black px-4 py-1 rounded shadow-sm border border-gray-400">${rank}</span>
+                            </div>
+                            <p class="text-gray-700 text-sm font-medium">往復の較差（${discrepancy.toFixed(1)}mm）は制限値（${limit.toFixed(1)}mm）以内で、成果として採用可能です。</p>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <p class="font-bold text-green-800 mb-2"><i class="fa-solid fa-chalkboard-user mr-1"></i>指導・アドバイス</p>
+                        <ul class="list-disc list-inside space-y-1 text-gray-800 text-sm font-medium ml-1">
+                `;
+                upAdvices.forEach(adv => adviceHtml += `<li>${adv}</li>`);
+                adviceHtml += `</ul></div>`;
+                adviceContent.innerHTML = adviceHtml;
+            } else {
+                badge.textContent = "不合格 (制限外)";
+                badge.className = "px-3 py-1 bg-red-600 text-white rounded text-xs font-bold shadow-inner animate-pulse";
+                discrepancyEl.className = "font-mono text-2xl text-red-600 font-black";
+                adviceContainer.classList.remove('hidden');
+                adviceContainer.className = "mt-6 border-2 border-red-600 rounded bg-white shadow-md transition-all duration-300 score-anim";
+                adviceHeader.className = "px-4 py-3 bg-red-50 border-b-2 border-red-600 font-bold flex items-center text-lg text-red-900";
+                adviceHeader.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2 text-red-700"></i>社内審査（品質管理）報告：要再測';
+                
+                let adviceHtml = `
+                    <div class="flex items-center gap-6 mb-4 bg-gray-50 p-4 border border-gray-300">
+                        <div class="text-center bg-white p-3 border-2 border-red-400 shadow-sm">
+                            <p class="text-xs text-gray-500 font-bold mb-1 border-b border-gray-200">総合スコア</p>
+                            <div class="text-5xl font-black text-red-600 tracking-tighter">${score}<span class="text-xl text-gray-500 font-normal">点</span></div>
+                        </div>
+                        <div class="flex-1 pl-2">
+                            <div class="flex items-center mb-2">
+                                <span class="font-bold text-gray-800 text-base mr-3">評価ランク:</span>
+                                <span class="${rankBg} ${rankColor} text-xl font-black px-4 py-1 rounded shadow-sm border border-red-800">${rank}</span>
+                            </div>
+                            <p class="text-red-700 text-sm font-bold">較差（${discrepancy.toFixed(1)}mm）が制限を超過しています。成果として採用不可のため、原因究明と再測量が必要です。</p>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <p class="font-bold text-red-800 mb-2"><i class="fa-solid fa-magnifying-glass mr-1"></i>原因究明と再測に向けた技術指導</p>
+                        <ul class="list-disc list-inside space-y-1 text-gray-800 text-sm font-medium ml-1">
+                `;
+                upAdvices.forEach(adv => adviceHtml += `<li>${adv}</li>`);
+                adviceHtml += `</ul></div>`;
+                adviceContent.innerHTML = adviceHtml;
+            }
+        }
+
+        tableContainer.addEventListener('input', (e) => {
+            if (e.target.tagName === 'INPUT') {
+                const activeTbody = currentMode === 'forward' ? tbodyF : tbodyB;
+                recalculateYacho(activeTbody);
+                updateRealtimeStats(); 
+                const tr = e.target.closest('tr');
+                if (tr === activeTbody.lastElementChild && e.target.value.trim() !== '') addRow(activeTbody);
+            }
+        });
+        tableContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('.btn-delete');
+            if (btn) {
+                const tr = btn.closest('tr');
+                const activeTbody = tr.closest('tbody');
+                if (activeTbody.children.length <= 1) tr.querySelectorAll('input').forEach(input => input.value = '');
+                else tr.remove();
+                recalculateYacho(activeTbody);
+                updateRealtimeStats();
+            }
+        });
+        document.getElementById('btn-complete').addEventListener('click', runEvaluation);
+
+        // ==========================================
+        // ブラウザ標準の印刷機能（PDFとして保存）を呼び出す
+        // ==========================================
+        document.getElementById('btn-print').addEventListener('click', () => {
+            window.print();
+        });
+
+        // ==========================================
+        // Firebase保存・読込処理
+        // ==========================================
+        async function initApp() {
+            try {
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-leveling-yacho';
+                if (!firebaseConfig) { showMessage("エラー", "システムの設定が見つかりません。", true); return; }
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUser = user;
+                        setupDataListener(appId, user.uid);
+                        loadingEl.classList.add('hidden');
+                        appContentEl.classList.remove('hidden');
+                        if(tbodyF.children.length === 0) addRow(tbodyF);
+                        if(tbodyB.children.length === 0) addRow(tbodyB);
+                    } else {
+                        if(unsubscribeSnapshot) unsubscribeSnapshot();
+                        appContentEl.classList.add('hidden');
+                        loadingEl.classList.remove('hidden');
+                    }
+                });
+            } catch (error) {
+                console.error("Init error:", error);
+            }
+        }
+
+        function setupDataListener(appId, userId) {
+            const coll = collection(db, 'artifacts', appId, 'users', userId, 'leveling_yacho_data');
+            unsubscribeSnapshot = onSnapshot(query(coll), (snapshot) => {
+                savedDataList = [];
+                snapshot.forEach(doc => savedDataList.push({ id: doc.id, ...doc.data() }));
+                savedDataList.sort((a, b) => (b.updatedAt?.toMillis() || 0) - (a.updatedAt?.toMillis() || 0));
+                renderHistoryList();
+            }, console.error);
+        }
+
+        const getRowsData = (tbody) => {
+            const rowsData = [];
+            tbody.querySelectorAll('tr').forEach(row => {
+                const name = row.querySelector('.col-name') ? row.querySelector('.col-name').value : '';
+                const dist = row.querySelector('.col-dist') ? row.querySelector('.col-dist').value : '';
+                const bf = row.querySelector('.col-bf') ? row.querySelector('.col-bf').value : '';
+                const ih = row.querySelector('.col-ih') ? row.querySelector('.col-ih').value : '';
+                const is = row.querySelector('.col-is') ? row.querySelector('.col-is').value : '';
+                const fs = row.querySelector('.col-fs') ? row.querySelector('.col-fs').value : '';
+                const gh = row.querySelector('.col-gh') ? row.querySelector('.col-gh').value : '';
+                if (name || dist || bf || fs || gh || is) rowsData.push({ name, dist, bf, ih, is, fs, gh });
+            });
+            return rowsData;
+        };
+
+        document.getElementById('btn-save').addEventListener('click', async () => {
+            if (!currentUser) return;
+            const siteName = siteNameInput.value.trim();
+            const routeName = routeNameInput.value.trim();
+            if (!routeName) return showMessage("入力エラー", "路線名を入力してください。", true);
+
+            const rowsForward = getRowsData(tbodyF);
+            const rowsBackward = getRowsData(tbodyB);
+            if (rowsForward.length === 0 && rowsBackward.length === 0) return showMessage("入力エラー", "保存するデータがありません。", true);
+
+            const saveData = {
+                siteName, routeName,
+                infoMachineName: infoMachineName.value,
+                infoMachineNo: infoMachineNo.value,
+                infoDate: infoDate.value,
+                infoObserver: infoObserver.value,
+                infoRecorder: infoRecorder.value,
+                infoInspector: infoInspector.value,
+                surveyMethod: surveyMethodSelect.value,
+                subSetting: subSettingSelect.value,
+                machineType: machineTypeSelect.value,
+                staffType: staffTypeSelect.value,
+                staffGrade: staffGradeSelect.value,
+                commissionedDistance: commissionedDistanceInput.value,
+                routeShapeSetting: routeShapeSettingSelect.value,
+                profileMargin: profileMarginInput.value,
+                ipPointSetting: ipPointSettingSelect.value,
+                rowsForward, rowsBackward,
+                accuracy: { grade: document.getElementById('accuracy-grade').value, distance: document.getElementById('accuracy-distance').value },
+                updatedAt: serverTimestamp()
+            };
+
+            try {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-leveling-yacho';
+                if (currentDocId) {
+                    await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'leveling_yacho_data', currentDocId), saveData);
+                    showMessage("保存完了", "データを上書き保存しました。");
+                } else {
+                    const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'leveling_yacho_data'), saveData);
+                    currentDocId = docRef.id;
+                    showMessage("保存完了", "新しい野帳データとして保存しました。");
+                }
+            } catch (error) {
+                console.error("Save error:", error);
+                showMessage("エラー", "保存に失敗しました。", true);
+            }
+        });
+
+        document.getElementById('btn-new').addEventListener('click', () => {
+            currentDocId = null;
+            siteNameInput.value = ''; routeNameInput.value = '';
+            infoMachineName.value = ''; infoMachineNo.value = ''; 
+            infoDate.valueAsDate = new Date();
+            infoObserver.value = ''; infoRecorder.value = ''; infoInspector.value = '';
+            commissionedDistanceInput.value = ''; profileMarginInput.value = '';
+            ipPointSettingSelect.value = 'none'; routeShapeSettingSelect.value = 'round_trip';
+            surveyMethodSelect.value = ''; machineTypeSelect.value = ''; staffTypeSelect.value = 'barcode'; staffGradeSelect.value = '2';
+            
+            subSettingContainer.classList.add('hidden'); profileSettingsContainer.classList.add('hidden');
+            levelingSettingsContainer.classList.add('hidden'); staffSettingsContainer.classList.add('hidden');
+            forwardMarginDisplay.classList.add('hidden'); btnSettingComplete.classList.add('hidden'); chiefAdvicePanel.classList.add('hidden');
+            
+            document.getElementById('accuracy-distance').value = '';
+            tbodyF.innerHTML = ''; tbodyB.innerHTML = ''; tbodyA.innerHTML = '';
+            addRow(tbodyF); addRow(tbodyB);
+            switchTab('forward');
+            updateRealtimeStats();
+        });
+
+        function loadDataToTable(data) {
+            siteNameInput.value = data.siteName || ''; routeNameInput.value = data.routeName || '';
+            infoMachineName.value = data.infoMachineName || ''; infoMachineNo.value = data.infoMachineNo || '';
+            if(data.infoDate) infoDate.value = data.infoDate; else infoDate.valueAsDate = new Date();
+            infoObserver.value = data.infoObserver || ''; infoRecorder.value = data.infoRecorder || ''; infoInspector.value = data.infoInspector || '';
+            commissionedDistanceInput.value = data.commissionedDistance || '';
+            
+            machineTypeSelect.value = data.machineType || '';
+            if (data.machineType === 'digital_level' || data.machineType === 'tilting_level') {
+                staffSettingsContainer.classList.remove('hidden');
+                staffTypeSelect.value = data.staffType || 'barcode';
+                staffGradeSelect.value = data.staffGrade || '2';
+            } else staffSettingsContainer.classList.add('hidden');
+
+            surveyMethodSelect.value = data.surveyMethod || '';
+            if(surveyMethodSelect.value) {
+                surveyMethodSelect.dispatchEvent(new Event('change'));
+                subSettingSelect.value = data.subSetting || '';
+                if (data.surveyMethod === 'leveling') routeShapeSettingSelect.value = data.routeShapeSetting || 'round_trip';
+                if (data.surveyMethod === 'profile') {
+                    profileMarginInput.value = data.profileMargin || '';
+                    ipPointSettingSelect.value = data.ipPointSetting || 'none';
+                    profileMarginInput.dispatchEvent(new Event('input'));
+                }
+                checkSettingCompleteVisibility();
+                if(!btnSettingComplete.classList.contains('hidden')) btnSettingComplete.click(); 
+            }
+
+            tbodyF.innerHTML = ''; tbodyB.innerHTML = ''; tbodyA.innerHTML = '';
+            
+            const populateTbody = (tbody, rData) => {
+                rData.forEach(r => {
+                    const clone = rowTemplate.content.cloneNode(true);
+                    const tr = clone.querySelector('tr');
+                    tr.querySelector('.col-name').value = r.name || ''; tr.querySelector('.col-dist').value = r.dist || '';
+                    tr.querySelector('.col-bf').value = r.bf || ''; tr.querySelector('.col-is').value = r.is || '';
+                    tr.querySelector('.col-fs').value = r.fs || ''; tr.querySelector('.col-gh').value = r.gh || '';
+                    tbody.appendChild(clone);
+                });
+                addRow(tbody); recalculateYacho(tbody);
+            };
+
+            populateTbody(tbodyF, data.rowsForward || []);
+            populateTbody(tbodyB, data.rowsBackward || []);
+            
+            if(data.accuracy) {
+                document.getElementById('accuracy-grade').value = data.accuracy.grade || '3';
+                document.getElementById('accuracy-distance').value = data.accuracy.distance || '';
+            }
+            
+            switchTab('forward');
+            updateRealtimeStats();
+            if (document.getElementById('accuracy-distance').value) runEvaluation();
+        }
+
+        function renderHistoryList() {
+            historyList.innerHTML = '';
+            if (savedDataList.length === 0) { emptyMessage.classList.remove('hidden'); return; }
+            emptyMessage.classList.add('hidden');
+
+            savedDataList.forEach(data => {
+                let dateStr = "保存中...";
+                if (data.updatedAt) {
+                    const d = data.updatedAt.toDate();
+                    dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+                }
+                const fCount = data.rowsForward?.length || 0; const bCount = data.rowsBackward?.length || 0;
+                const siteLabel = data.siteName ? `<div class="text-xs text-blue-800 font-bold mb-1 border-b border-gray-300 pb-1">${escapeHTML(data.siteName)}</div>` : '';
+
+                const card = document.createElement('div');
+                card.className = "relative bg-white border-2 border-gray-300 rounded p-4 hover:border-blue-500 hover:shadow-md transition-all cursor-pointer";
+                card.innerHTML = `
+                    ${siteLabel}
+                    <h3 class="font-bold text-gray-800 text-lg mb-2 pr-8 mt-1">${escapeHTML(data.routeName)}</h3>
+                    <div class="text-sm text-gray-500 mb-2 font-medium"><i class="fa-regular fa-clock mr-1"></i>${dateStr}</div>
+                    <div class="flex gap-2">
+                        <span class="text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">往路: ${fCount}点</span>
+                        <span class="text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">復路: ${bCount}点</span>
+                    </div>
+                `;
+                card.addEventListener('click', () => { currentDocId = data.id; loadDataToTable(data); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+                deleteBtn.className = "absolute top-3 right-3 p-2 text-gray-400 hover:text-red-600 transition-colors bg-gray-100 rounded hover:bg-red-50";
+                deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); docToDelete = data.id; confirmModal.classList.remove('hidden'); });
+                card.appendChild(deleteBtn);
+                historyList.appendChild(card);
+            });
+        }
+
+        document.getElementById('confirm-cancel').addEventListener('click', () => { confirmModal.classList.add('hidden'); docToDelete = null; });
+        document.getElementById('confirm-ok').addEventListener('click', async () => {
+            if (docToDelete && currentUser) {
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-leveling-yacho';
+                    await deleteDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'leveling_yacho_data', docToDelete));
+                    if (currentDocId === docToDelete) document.getElementById('btn-new').click();
+                    showMessage("破棄完了", "データを破棄しました。");
+                } catch(error) { showMessage("エラー", "データの破棄に失敗しました。", true); }
+                confirmModal.classList.add('hidden'); docToDelete = null;
+            }
+        });
+
+        // Excel出力
+        document.getElementById('btn-export').addEventListener('click', () => {
+            const siteName = siteNameInput.value.trim();
+            const routeName = routeNameInput.value.trim() || '未名称路線';
+            
+            const commonHeader = [
+                ["現場名", siteName, "路線名/観測区間", routeName],
+                ["観測年月日", infoDate.value, "機械名", infoMachineName.value, "NO.", infoMachineNo.value],
+                ["観測者", infoObserver.value, "記帳者", infoRecorder.value, "点検者", infoInspector.value],
+                [] 
+            ];
+
+            const wb = XLSX.utils.book_new();
+
+            const fData = [...commonHeader, ["点名", "単距離(m)", "後視(B.S)", "器械高(I.H)", "杭下(I.S)", "前視(F.S)", "地盤高(G.H)"]];
+            let hasFData = false;
+            tbodyF.querySelectorAll('tr').forEach(row => {
+                const name = row.querySelector('.col-name').value;
+                const dist = row.querySelector('.col-dist').value;
+                const bf = row.querySelector('.col-bf').value;
+                const ih = row.querySelector('.col-ih').value;
+                const is = row.querySelector('.col-is').value;
+                const fs = row.querySelector('.col-fs').value;
+                const gh = row.querySelector('.col-gh').value;
+                if (name || dist || bf || ih || fs || gh || is) {
+                    hasFData = true;
+                    fData.push([name, dist, bf, ih, is, fs, gh]);
+                }
+            });
+            const wsF = XLSX.utils.aoa_to_sheet(fData);
+            XLSX.utils.book_append_sheet(wb, wsF, "往路");
+
+            const bData = [...commonHeader, ["点名", "単距離(m)", "後視(B.S)", "器械高(I.H)", "前視(F.S)", "地盤高(G.H)"]];
+            let hasBData = false;
+            tbodyB.querySelectorAll('tr').forEach(row => {
+                const name = row.querySelector('.col-name').value;
+                const dist = row.querySelector('.col-dist').value;
+                const bf = row.querySelector('.col-bf').value;
+                const ih = row.querySelector('.col-ih').value;
+                const fs = row.querySelector('.col-fs').value;
+                const gh = row.querySelector('.col-gh').value;
+                if (name || dist || bf || ih || fs || gh) {
+                    hasBData = true;
+                    bData.push([name, dist, bf, ih, fs, gh]);
+                }
+            });
+            const wsB = XLSX.utils.aoa_to_sheet(bData);
+            XLSX.utils.book_append_sheet(wb, wsB, "復路");
+
+            if (!hasFData && !hasBData) return showMessage("お知らせ", "出力するデータがありません。");
+
+            syncAverageRoute();
+            const aData = [...commonHeader, ["点名", "累積距離(m)", "往路高(m)", "復路高(m)", "較差(mm)", "制限値(mm)", "往復平均高(G.H)"]];
+            tbodyA.querySelectorAll('tr').forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if(cells.length >= 7) {
+                    aData.push([cells[0].innerText, cells[1].innerText, cells[2].innerText, cells[3].innerText, cells[4].innerText, cells[5].innerText, cells[6].innerText]);
+                }
+            });
+            const wsA = XLSX.utils.aoa_to_sheet(aData);
+            XLSX.utils.book_append_sheet(wb, wsA, "平均");
+
+            const gradeText = document.getElementById('accuracy-grade').options[document.getElementById('accuracy-grade').selectedIndex].text;
+            const evalData = [
+                ["精度管理計算書"],
+                [],
+                ["現場名", siteName],
+                ["路線名", routeName],
+                ["測量の等級", gradeText],
+                ["観測年月日", infoDate.value],
+                ["観測者", infoObserver.value, "点検者", infoInspector.value],
+                [],
+                ["観測距離 S(km)", document.getElementById('accuracy-distance').value],
+                ["往路高低差(m)", document.getElementById('calc-diff-f').textContent],
+                ["復路高低差(m)", document.getElementById('calc-diff-b').textContent],
+                ["較差(mm)", document.getElementById('calc-discrepancy').textContent],
+                ["制限値(mm)", document.getElementById('calc-limit').textContent],
+                ["判定", document.getElementById('calc-judge-badge').textContent.split(' ')[0]]
+            ];
+            const wsEval = XLSX.utils.aoa_to_sheet(evalData);
+            XLSX.utils.book_append_sheet(wb, wsEval, "精度管理");
+
+            const d = new Date();
+            const dateStr = `${d.getFullYear()}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
+            const fileNamePrefix = siteName ? `${siteName}_` : '';
+            XLSX.writeFile(wb, `水準野帳_${fileNamePrefix}${routeName}_${dateStr}.xlsx`);
+        });
+
+        function escapeHTML(str) { return str ? str.replace(/[&<>'"]/g, t => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[t])) : ''; }
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
